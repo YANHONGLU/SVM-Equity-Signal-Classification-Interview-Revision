@@ -1,1 +1,261 @@
-# SVM-Equity-Signal-Classification-Interview-Revision
+
+SVM Equity Signal Classification — Interview Revision.ipynb
+SVM Equity Signal Classification — Interview Revision.ipynbC_
+Part 1 — Data Collection
+目标： 下载 American Express (AXP) 股票数据，并保留模型需要的价格和成交量字段。
+
+流程：
+
+Import libraries
+Download stock data
+Keep Open / High / Low / Close / Volume
+Rename columns
+
+[1]
+6s
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
+from sklearn.svm import SVC
+from sklearn.metrics import (
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
+
+[2]
+0s
+# 下载 American Express 股票数据
+data = yf.download(
+    "AXP",
+    start="2020-01-01",
+    end="2025-10-14",
+    progress=False
+)
+
+# 只保留需要的字段
+data = data[["Open", "High", "Low", "Close", "Volume"]]
+
+# 简化列名
+data.columns = ["open", "high", "low", "close", "volume"]
+/tmp/ipykernel_636/2266639396.py:2: FutureWarning: YF.download() has changed argument auto_adjust default to True
+  data = yf.download(
+Part 2 — Feature Engineering
+目标： 从价格和成交量数据中创建模型需要的特征，并定义预测目标 Label。
+
+最终模型使用三个特征：
+
+PCHG28 = 28天价格变化 VCHG14 = 14天成交量变化 VCHG7 = 7天成交量变化
+
+Label： 如果明天的收盘价突破今天的7天 Bollinger Band 上轨，则 Label = 1。 否则 Label = 0。
+
+
+[4]
+# 计算过去28天价格变化率
+data["PCHG28"] = data["close"].pct_change(28)
+
+# 计算过去14天成交量变化率
+data["VCHG14"] = data["volume"].pct_change(14)
+
+# 计算过去7天成交量变化率
+data["VCHG7"] = data["volume"].pct_change(7)
+
+
+# 计算7天移动平均
+mean_7 = data["close"].rolling(7).mean()
+
+# 计算7天价格标准差
+std_7 = data["close"].rolling(7).std()
+
+# 计算 Bollinger Band 上轨
+upper_band_7 = mean_7 + 2 * std_7
+
+
+# 如果明天收盘价突破今天的上轨，则 Label = 1⭐.astype(int)= True/False 变成 1/0
+data["label"] = ( data["close"].shift(-1) > upper_band_7).astype(int)
+
+
+# 删除计算过程中产生的空值
+data = data.dropna()
+Part 3 — Train / Test Split
+目标： 把历史数据分成训练集和测试集。
+
+因为这是时间序列数据，所以不能随机打乱。
+
+前80%数据 → Training 后20%数据 → Testing
+
+这样可以模拟真实情况：
+
+Past → Future
+
+
+[5]
+# ⭐最终模型使用的三个特征
+features = ["PCHG28", "VCHG14", "VCHG7"]
+
+X = data[features] 
+y = data["label"]
+
+
+# 前80%作为训练数据
+# 后20%作为测试数据
+split_point = int(len(data) * 0.8)
+
+X_train = X.iloc[:split_point]
+X_test = X.iloc[split_point:]
+
+y_train = y.iloc[:split_point]
+y_test = y.iloc[split_point:]
+Part 4 — Feature Scaling
+目标： 使用 StandardScaler 对特征进行标准化。
+
+SVM 对不同特征的数值尺度比较敏感。
+
+重要规则： Scaler 只能在 Training Data 上 fit。
+
+Training: fit_transform()
+
+Testing: transform()
+
+
+[6]
+#⭐ 创建标准化器
+scaler = StandardScaler()
+
+# 用训练数据学习平均值和标准差
+X_train_scaled = scaler.fit_transform(X_train)
+
+# 测试数据使用相同的标准化规则
+X_test_scaled = scaler.transform(X_test)
+Part 5 — Model Training
+目标： 训练 SVM 分类模型。
+
+使用： SVC TimeSeriesSplit GridSearchCV
+
+TimeSeriesSplit 保证： 过去的数据用于预测未来。
+
+GridSearchCV 自动测试不同参数组合， 并根据 ROC AUC 选择表现最好的模型。
+
+
+[8]
+5m
+# 设置不同的 SVM 参数组合
+parameter_grid = {
+    "kernel": ["rbf", "linear", "poly"],
+    "C": [0.1, 1, 10, 100],
+    "gamma": ["scale", "auto", 0.001, 0.01, 0.1],
+    "class_weight": [None, "balanced"]
+}
+
+
+# 创建5折时间序列交叉验证
+time_series_split =TimeSeriesSplit(n_splits=5)
+
+
+# 自动寻找 ROC AUC 最好的参数组合
+grid_search = GridSearchCV(
+    SVC(probability=True),# 要输出概率
+    parameter_grid,
+    cv=time_series_split, #每组参数都做 5 轮“过去预测未来”
+    scoring="roc_auc" #最后按照 ROC AUC 谁最高，选谁
+)
+
+
+# 使用训练数据训练模型
+grid_search.fit(X_train_scaled, y_train)
+
+
+# 取表现最好的模型
+best_model = grid_search.best_estimator_
+Part 6 — Model Evaluation
+目标： 使用测试数据评估最终模型。
+
+主要指标：
+
+ROC AUC Precision Recall F1 Score Confusion Matrix
+
+这些指标不仅看模型预测对不对， 还可以分析 False Positive 和 False Negative。
+
+
+[9]
+0s
+# 预测属于正类的概率
+positive_probability = best_model.predict_proba(X_test_scaled)[:, 1]
+
+# 设置分类阈值
+threshold = 0.5
+
+# 概率达到0.5则预测为1
+prediction = (positive_probability >= threshold).astype(int)
+
+[10]
+0s
+# ROC AUC：模型区分正类和负类的能力
+auc = roc_auc_score(y_test,positive_probability)
+
+# Precision：预测为正类的结果里，有多少是真的
+precision = precision_score(y_test,prediction)
+
+# Recall：真正的正类里，有多少被模型找出来
+recall = recall_score(y_test,prediction)
+
+# F1：综合考虑 Precision 和 Recall
+f1 = f1_score(y_test,prediction)
+
+# 查看 TP / TN / FP / FN
+confusion_matrix_result = confusion_matrix(y_test,prediction)
+/usr/local/lib/python3.13/dist-packages/sklearn/metrics/_classification.py:1565: UndefinedMetricWarning: Precision is ill-defined and being set to 0.0 due to no predicted samples. Use `zero_division` parameter to control this behavior.
+  _warn_prf(average, modifier, f"{metric.capitalize()} is", len(result))
+Interview Notes
+Project Objective
+Predict whether the next-day stock price will break above the current Bollinger upper band.
+
+Final Features
+PCHG28 VCHG14 VCHG7
+
+The original project engineered 44 features and reduced them to three through multiple feature-selection stages.
+
+Why TimeSeriesSplit?
+To preserve chronological order and avoid data leakage.
+
+Past → Future
+
+Why StandardScaler?
+SVM is sensitive to feature scale.
+
+The scaler must only be fitted on the training data.
+
+Why ROC AUC?
+ROC AUC measures how well the model separates positive and negative cases across different thresholds.
+
+It is more useful than accuracy when classes are imbalanced.
+
+Precision
+Of all alerts generated by the model, how many are actually positive?
+
+Recall
+Of all actual positive cases, how many did the model identify?
+
+False Positive
+The model generates an alert, but the case is actually negative.
+
+Financial Crime Example: A normal transaction is incorrectly flagged as suspicious.
+
+False Negative
+The model does not generate an alert, but the case is actually positive.
+
+Financial Crime Example: A genuinely suspicious transaction is missed.
+
+Barclays Connection
+The same modelling framework can be applied to transaction monitoring:
+
+Transaction Data ↓ Feature Engineering ↓ Classification / Rules ↓ Risk Score ↓ Threshold ↓ Alert ↓ Precision / Recall ↓ Model Monitoring
+
+Colab paid products
+-
+Cancel contracts here
