@@ -173,3 +173,206 @@ The most important concepts to explain clearly are:
 * Difference between False Positive and False Negative
 * How classification thresholds affect alerts
 * How the same framework can be applied to transaction monitoring
+# SVM 股票信号分类 — 面试复习笔记
+
+## 项目目标
+
+预测**第二天的股票收盘价是否会突破当天的 Bollinger Band 上轨**。
+
+这是一个二分类问题：
+
+* `1` = 第二天突破上轨
+* `0` = 第二天没有突破上轨
+
+---
+
+## 最终特征
+
+模型最终使用三个特征：
+
+* `PCHG28` — 过去 28 天价格变化率
+* `VCHG14` — 过去 14 天成交量变化率
+* `VCHG7` — 过去 7 天成交量变化率
+
+原始项目一共创建了 **44 个特征**，经过多阶段 Feature Selection，最终减少到 **3 个特征**。
+
+---
+
+## 为什么使用 TimeSeriesSplit？
+
+股票数据属于时间序列。
+
+训练模型时必须保持：
+
+**过去 → 未来**
+
+不能随机打乱数据，否则未来的信息可能进入训练集。
+
+这样可以避免：
+
+> Data Leakage（数据泄漏）
+
+---
+
+## 为什么使用 StandardScaler？
+
+SVM 对不同 Feature 的数值尺度比较敏感。
+
+所以在训练模型之前，需要使用 `StandardScaler` 把不同 Feature 调整到相近的尺度。
+
+重要规则：
+
+* Training Data：`fit_transform()`
+* Testing Data：`transform()`
+
+Scaler 只能在 Training Data 上学习平均值和标准差。
+
+否则也会造成 Data Leakage。
+
+---
+
+## 为什么使用 ROC AUC？
+
+ROC AUC 衡量模型区分正类和负类的能力。
+
+它不是只看某一个 Threshold，而是考虑不同 Threshold 下模型整体的分类能力。
+
+当数据存在 Class Imbalance 时，它通常比单纯 Accuracy 更有参考价值。
+
+---
+
+## Precision
+
+Precision 回答：
+
+> 模型所有发出的 Alert 里面，有多少是真的 Positive？
+
+如果 Precision 很低：
+
+说明模型产生了很多 False Positive。
+
+---
+
+## Recall
+
+Recall 回答：
+
+> 所有真正的 Positive 里面，模型成功找到了多少？
+
+如果 Recall 很低：
+
+说明模型漏掉了很多真正应该发现的 Positive。
+
+---
+
+## False Positive
+
+模型判断：
+
+> Positive / Alert
+
+但实际上：
+
+> Negative / Normal
+
+### Financial Crime Example
+
+一笔正常交易被系统错误地标记为可疑交易。
+
+这会增加人工调查工作量。
+
+---
+
+## False Negative
+
+模型判断：
+
+> Negative / No Alert
+
+但实际上：
+
+> Positive / Suspicious
+
+### Financial Crime Example
+
+一笔真正可疑的交易没有被系统发现。
+
+这意味着真正的风险可能被遗漏。
+
+---
+
+## Barclays Connection
+
+这个 SVM 项目虽然使用股票数据，但底层的 Classification Framework 可以应用到 Transaction Monitoring。
+
+```text
+Transaction Data
+        ↓
+Feature Engineering
+        ↓
+Classification / Rules
+        ↓
+Risk Score
+        ↓
+Threshold
+        ↓
+Alert
+        ↓
+Precision / Recall
+        ↓
+Model Monitoring
+```
+
+核心逻辑是一样的：
+
+根据历史数据创建 Features，然后利用模型或规则计算 Risk Score，再根据 Threshold 决定是否产生 Alert。
+
+---
+
+## 项目核心流程
+
+```text
+Market Data
+    ↓
+Feature Engineering
+    ↓
+Label Creation
+    ↓
+Train / Test Split
+    ↓
+StandardScaler
+    ↓
+SVM
+    ↓
+TimeSeriesSplit
+    ↓
+GridSearchCV
+    ↓
+Prediction
+    ↓
+ROC AUC
+Precision
+Recall
+F1
+    ↓
+Confusion Matrix
+```
+
+---
+
+## 面试重点
+
+必须能够解释：
+
+1. 为什么 Time Series 不能 Random Split
+2. 什么是 Data Leakage
+3. 为什么 SVM 需要 StandardScaler
+4. 为什么 Scaler 只能 Fit Training Data
+5. 为什么使用 TimeSeriesSplit
+6. 为什么使用 ROC AUC
+7. Precision 和 Recall 的区别
+8. False Positive 和 False Negative 的区别
+9. Threshold 如何影响 Alert 数量
+10. 如何把这个模型思路应用到 Financial Crime / Transaction Monitoring
+
+  
